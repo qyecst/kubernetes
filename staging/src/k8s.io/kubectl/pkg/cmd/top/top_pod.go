@@ -215,9 +215,39 @@ func (o TopPodOptions) RunTopPod() error {
 		} else {
 			fmt.Fprintf(o.ErrOut, "No resources found in %s namespace.\n", o.Namespace)
 		}
+		return nil
 	}
 
-	return o.Printer.PrintPodMetrics(metrics.Items, o.PrintContainers, o.AllNamespaces, o.NoHeaders, o.SortBy, o.Sum)
+	var pods []corev1.Pod
+	if len(o.ResourceName) > 0 {
+		pod, err := o.PodClient.Pods(o.Namespace).Get(context.TODO(), o.ResourceName, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		pods = append(pods, *pod)
+	} else {
+		namespace := o.Namespace
+		if o.AllNamespaces {
+			namespace = corev1.NamespaceAll
+		}
+		podList, err := o.PodClient.Pods(namespace).List(context.TODO(), metav1.ListOptions{
+			LabelSelector: labelSelector.String(),
+			FieldSelector: fieldSelector.String(),
+		})
+		if err != nil {
+			return err
+		}
+		pods = append(pods, podList.Items...)
+	}
+	podsNodeInfo := make(map[string]map[string]string)
+	for _, p := range pods {
+		if podsNodeInfo[p.Namespace] == nil {
+			podsNodeInfo[p.Namespace] = make(map[string]string)
+		}
+		podsNodeInfo[p.Namespace][p.Name] = p.Spec.NodeName
+	}
+
+	return o.Printer.PrintPodMetrics(metrics.Items, o.PrintContainers, o.AllNamespaces, o.NoHeaders, o.SortBy, o.Sum, podsNodeInfo)
 }
 
 func getMetricsFromMetricsAPI(metricsClient metricsclientset.Interface, namespace, resourceName string, allNamespaces bool, labelSelector labels.Selector, fieldSelector fields.Selector) (*metricsapi.PodMetricsList, error) {

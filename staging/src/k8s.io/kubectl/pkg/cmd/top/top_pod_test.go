@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -73,6 +73,73 @@ const (
 			"serverAddressByClientCIDRs":null
 		}
 	]
+}`
+
+	testnsPod1Info = `{
+  "kind": "Pod",
+  "apiVersion": "v1",
+  "metadata": {"name": "pod1","namespace": "testns"},
+  "spec": {"containers": [{"name": "one"}],"nodeName": "node1"}
+}`
+
+	testnsPodListNS = `{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "items": [
+		{
+      "metadata": {"name": "pod1","namespace": "testns"},
+      "spec": {"containers": [{"name": "one"}],"nodeName": "node1"}
+    }
+	]
+}`
+
+	testPod1Info = `{
+  "kind": "Pod",
+  "apiVersion": "v1",
+  "metadata": {"name": "pod1","namespace": "test"},
+  "spec": {"containers": [{"name": "one"}],"nodeName": "node1"}
+}`
+
+	testPodListNS = `{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "items": [
+    {
+      "metadata": {"name": "pod1","namespace": "test"},
+      "spec": {"containers": [{"name": "one"}],"nodeName": "node1"}
+    },
+    {
+      "metadata": {"name": "pod2","namespace": "test"},
+      "spec": {"containers": [{"name": "two1"},{"name": "two2"}],"nodeName": "node2"}
+    }
+  ]
+}`
+
+	allPodListAll = `{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "items": [
+		{
+      "metadata": {"name": "pod1","namespace": "testns"},
+      "spec": {"containers": [{"name": "one"}],"nodeName": "node1"}
+    },
+    {
+      "metadata": {"name": "pod1","namespace": "test"},
+      "spec": {"containers": [{"name": "one"}],"nodeName": "node3"}
+    },
+    {
+      "metadata": {"name": "pod2","namespace": "test"},
+      "spec": {"containers": [{"name": "two1"},{"name": "two2"}],"nodeName": "node2"}
+    },
+ 		{
+      "metadata": {"name": "pod3","namespace": "test"},
+      "spec": {"containers": [{"name": "three"}],"nodeName": "node5"}
+    },
+    {
+      "metadata": {"name": "pod3","namespace": "default"},
+      "spec": {"containers": [{"name": "one"}],"nodeName": "node4"}
+    }
+  ]
 }`
 )
 
@@ -218,6 +285,16 @@ func TestTopPod(t *testing.T) {
 						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(apibody)))}, nil
 					case p == "/apis":
 						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(apisbodyWithMetrics)))}, nil
+					case p == "/api/v1/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(allPodListAll)))}, nil
+					case p == "/api/v1/namespaces/test/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testPodListNS)))}, nil
+					case p == "/api/v1/namespaces/testns/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testnsPodListNS)))}, nil
+					case p == "/api/v1/namespaces/test/pods/pod1":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testPod1Info)))}, nil
+					case p == "/api/v1/namespaces/testns/pods/pod1":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testnsPod1Info)))}, nil
 					default:
 						t.Fatalf("%s: unexpected request: %#v\nGot URL: %#v",
 							testCase.name, req, req.URL)
@@ -283,6 +360,158 @@ func TestTopPod(t *testing.T) {
 				if !reflect.DeepEqual(testCase.expectedContainers, resultContainers) {
 					t.Errorf("containers not matching:\n\texpectedContainers: %v\n\tresultContainers: %v\n", testCase.expectedContainers, resultContainers)
 				}
+			}
+		})
+	}
+}
+
+func TestTopPodOutput(t *testing.T) {
+	outputTestCases := []struct {
+		name           string
+		namespace      string
+		args           []string
+		allNamespaces  bool
+		expectedOutput string
+		options        *TopPodOptions
+	}{
+		{
+			name:      "pod with node name",
+			namespace: "test",
+			args:      []string{"pod1"},
+			expectedOutput: `NAME   NODE    CPU(cores)   MEMORY(bytes)   
+pod1   node1   5m           7Mi             
+`,
+		},
+		{
+			name:      "pods with ns",
+			namespace: "test",
+			expectedOutput: `NAME   NODE     CPU(cores)   MEMORY(bytes)   
+pod1   node1    5m           7Mi             
+pod2   node2    30m          33Mi            
+pod3   <none>   7m           8Mi             
+`,
+		},
+		{
+			name:          "pods",
+			allNamespaces: true,
+			expectedOutput: `NAME   NODE    CPU(cores)   MEMORY(bytes)   
+pod1   node3   5m           7Mi             
+pod2   node2   30m          33Mi            
+pod3   node5   7m           8Mi             
+`,
+		},
+		{
+			name:      "no nodes",
+			namespace: "testns",
+			expectedOutput: `NAME   NODE     CPU(cores)   MEMORY(bytes)   
+pod1   <none>   5m           7Mi             
+pod2   <none>   30m          33Mi            
+pod3   <none>   7m           8Mi             
+`,
+		},
+		{
+			name:          "containers",
+			allNamespaces: true,
+			options:       &TopPodOptions{PrintContainers: true},
+			expectedOutput: `POD    NAME           NODE    CPU(cores)   MEMORY(bytes)   
+pod1   container1-1   node3   1m           2Mi             
+pod1   container1-2   node3   4m           5Mi             
+pod2   container2-1   node2   7m           8Mi             
+pod2   container2-2   node2   10m          11Mi            
+pod2   container2-3   node2   13m          14Mi            
+pod3   container3-1   node5   7m           8Mi             
+`,
+		},
+		{
+			name:          "no header",
+			allNamespaces: true,
+			options:       &TopPodOptions{NoHeaders: true},
+			expectedOutput: `pod1   node3   5m    7Mi    
+pod2   node2   30m   33Mi   
+pod3   node5   7m    8Mi    
+`,
+		},
+	}
+
+	for _, testCase := range outputTestCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			metricsList := testV1beta1PodMetricsData()
+			fakemetricsClientset := &metricsfake.Clientset{}
+			fakemetricsClientset.AddReactor("get", "pods", func(action core.Action) (handled bool, ret runtime.Object, err error) {
+				return true, &metricsList[0], nil
+			})
+			fakemetricsClientset.AddReactor("list", "pods", func(action core.Action) (handled bool, ret runtime.Object, err error) {
+				res := &metricsv1beta1api.PodMetricsList{
+					ListMeta: metav1.ListMeta{
+						ResourceVersion: "2",
+					},
+					Items: metricsList,
+				}
+				return true, res, nil
+			})
+
+			namespace := "test"
+			if len(testCase.namespace) > 0 {
+				namespace = testCase.namespace
+			}
+			if testCase.allNamespaces {
+				namespace = v1.NamespaceAll
+			}
+			tf := cmdtesting.NewTestFactory().WithNamespace(namespace)
+			defer tf.Cleanup()
+
+			ns := scheme.Codecs.WithoutConversion()
+			tf.Client = &fake.RESTClient{
+				NegotiatedSerializer: ns,
+				Client: fake.CreateHTTPClient(func(req *http.Request) (*http.Response, error) {
+					switch p := req.URL.Path; {
+					case p == "/api":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(apibody)))}, nil
+					case p == "/apis":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(apisbodyWithMetrics)))}, nil
+					case p == "/api/v1/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(allPodListAll)))}, nil
+					case p == "/api/v1/namespaces/test/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testPodListNS)))}, nil
+					case p == "/api/v1/namespaces/testns/pods":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testnsPodListNS)))}, nil
+					case p == "/api/v1/namespaces/test/pods/pod1":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testPod1Info)))}, nil
+					case p == "/api/v1/namespaces/testns/pods/pod1":
+						return &http.Response{StatusCode: http.StatusOK, Header: cmdtesting.DefaultHeader(), Body: io.NopCloser(bytes.NewReader([]byte(testnsPod1Info)))}, nil
+					default:
+						t.Fatalf("%s: unexpected request: %#v\nGot URL: %#v",
+							testCase.name, req, req.URL)
+						return nil, nil
+					}
+				}),
+			}
+			tf.ClientConfigVal = cmdtesting.DefaultClientConfig()
+			streams, _, buf, _ := genericiooptions.NewTestIOStreams()
+
+			cmd := NewCmdTopPod(tf, nil, streams)
+			var cmdOptions *TopPodOptions
+			if testCase.options != nil {
+				cmdOptions = testCase.options
+			} else {
+				cmdOptions = &TopPodOptions{}
+			}
+			cmdOptions.IOStreams = streams
+
+			if err := cmdOptions.Complete(tf, cmd, testCase.args); err != nil {
+				t.Fatal(err)
+			}
+			cmdOptions.MetricsClient = fakemetricsClientset
+			if err := cmdOptions.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmdOptions.RunTopPod(); err != nil {
+				t.Fatal(err)
+			}
+
+			result := buf.String()
+			if result != testCase.expectedOutput {
+				t.Errorf("expected: \n%s, saw: \n%s", testCase.expectedOutput, result)
 			}
 		})
 	}

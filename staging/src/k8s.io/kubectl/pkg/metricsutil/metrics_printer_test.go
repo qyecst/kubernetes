@@ -179,8 +179,8 @@ func TestPrintPodMetrics(t *testing.T) {
 					},
 				},
 			},
-			expectedOutput: `NAME   CPU(cores)   MEMORY(bytes)   
-test   400m         2048Mi          
+			expectedOutput: `NAME   NODE   CPU(cores)   MEMORY(bytes)   
+test   node   400m         2048Mi          
 `,
 		},
 		{
@@ -212,9 +212,9 @@ test   400m         2048Mi
 				},
 			},
 			printContainers: true,
-			expectedOutput: `POD    NAME         CPU(cores)   MEMORY(bytes)   
-test   container1   200m         1024Mi          
-test   container2   200m         1024Mi          
+			expectedOutput: `POD    NAME         NODE   CPU(cores)   MEMORY(bytes)   
+test   container1   node   200m         1024Mi          
+test   container2   node   200m         1024Mi          
 `,
 		},
 		{
@@ -246,7 +246,7 @@ test   container2   200m         1024Mi
 				},
 			},
 			noHeader: true,
-			expectedOutput: `test   400m   2048Mi   
+			expectedOutput: `test   node   400m   2048Mi   
 `,
 		},
 		{
@@ -302,9 +302,9 @@ test   container2   200m         1024Mi
 				},
 			},
 			sortBy: "memory",
-			expectedOutput: `NAME     CPU(cores)   MEMORY(bytes)   
-test-1   400m         5120Mi          
-test     400m         2048Mi          
+			expectedOutput: `NAME     NODE   CPU(cores)   MEMORY(bytes)   
+test-1   node   400m         5120Mi          
+test     node   400m         2048Mi          
 `,
 		},
 		{
@@ -360,11 +360,11 @@ test     400m         2048Mi
 				},
 			},
 			sum: true,
-			expectedOutput: `NAME     CPU(cores)   MEMORY(bytes)   
-test     400m         2048Mi          
-test-1   400m         5120Mi          
-         ________     ________        
-         800m         7168Mi          
+			expectedOutput: `NAME     NODE   CPU(cores)   MEMORY(bytes)   
+test     node   400m         2048Mi          
+test-1   node   400m         5120Mi          
+                ________     ________        
+                800m         7168Mi          
 `,
 		},
 	}
@@ -376,7 +376,7 @@ test-1   400m         5120Mi
 
 			top := NewTopCmdPrinter(out)
 			err := top.PrintPodMetrics(test.podMetric, test.printContainers,
-				test.withNamespace, test.noHeader, test.sortBy, test.sum)
+				test.withNamespace, test.noHeader, test.sortBy, test.sum, getPodsNodeInfo())
 			assert.Equal(t, test.expectedErr, err)
 			assert.Equal(t, test.expectedOutput, out.String())
 		})
@@ -393,4 +393,19 @@ func newNode(name string) *v1.Node {
 			},
 		},
 	}
+}
+
+func getPodsNodeInfo() map[string]map[string]string {
+	ns := []string{"default"}
+	pods := []string{"test", "test-1"}
+	podsNodeInfo := make(map[string]map[string]string)
+	for _, n := range ns {
+		for _, p := range pods {
+			if podsNodeInfo[n] == nil {
+				podsNodeInfo[n] = make(map[string]string)
+			}
+			podsNodeInfo[n][p] = "node"
+		}
+	}
+	return podsNodeInfo
 }
